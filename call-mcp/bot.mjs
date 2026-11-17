@@ -46,17 +46,70 @@ const log = (...a) => console.error('[call-mcp]', ...a);   // stdout belongs to 
 /* ------------------------------------------------------- inside the page */
 
 // Runs before the app's own code. The app asks for camera + microphone; it gets a
-// "microphone" that is really a Web Audio node the bot can play speech into, and no
-// camera, so it takes its own sound-only path.
+// "microphone" that is really a Web Audio node the bot can play speech into, and a
+// "camera" that is a drawn icon which pulses while the bot speaks.
 function pageInit() {
-  const bot = (window.__callBot = { out: null, dest: null, taps: new Map(), nextId: 1, timer: 0 });
+  const bot = (window.__callBot = { out: null, dest: null, meter: null, canvas: null, taps: new Map(), nextId: 1, timer: 0 });
   if (!navigator.mediaDevices) return;
+  const audioOut = () => {
+    if (!bot.out) {
+      bot.out = new AudioContext();
+      bot.meter = bot.out.createAnalyser();
+      bot.meter.fftSize = 1024;
+    }
+    return bot.out;
+  };
+  const icon = () => {
+    if (bot.canvas) return bot.canvas;
+    const S = 720;
+    const c = (bot.canvas = document.createElement('canvas'));
+    c.width = c.height = S;
+    const g = c.getContext('2d');
+    const samples = new Float32Array(1024);
+    const RAYS = [1, 0.72, 0.9, 0.66, 0.96, 0.7, 0.86, 0.64, 1, 0.74, 0.88, 0.68];   // uneven, like a hand-drawn spark
+    let level = 0, tick = 0;
+    const draw = () => {
+      let now = 0;
+      if (bot.meter) {
+        bot.meter.getFloatTimeDomainData(samples);
+        let sum = 0;
+        for (const x of samples) sum += x * x;
+        now = Math.min(1, Math.sqrt(sum / samples.length) * 6);
+      }
+      level += (now - level) * (now > level ? 0.6 : 0.25);
+      tick++;
+      g.fillStyle = '#262624';
+      g.fillRect(0, 0, S, S);
+      const breathe = 1 + Math.sin(tick / 12) * 0.015;   // also keeps frames flowing to the others
+      const R = S * 0.13 * (1 + level * 0.3) * breathe;
+      g.save();
+      g.translate(S / 2, S / 2);
+      g.strokeStyle = '#d97757';
+      g.lineCap = 'round';
+      g.lineWidth = S * 0.022 * (1 + level * 0.2);
+      RAYS.forEach((len, i) => {
+        const a = (i / RAYS.length) * Math.PI * 2 - Math.PI / 2;
+        g.beginPath();
+        g.moveTo(Math.cos(a) * R * 0.16, Math.sin(a) * R * 0.16);
+        g.lineTo(Math.cos(a) * R * len, Math.sin(a) * R * len);
+        g.stroke();
+      });
+      g.restore();
+    };
+    draw();
+    setInterval(draw, 66);
+    return c;
+  };
   navigator.mediaDevices.getUserMedia = async c => {
-    if (c && c.video) throw new DOMException('No camera', 'NotFoundError');
-    if (!bot.out) bot.out = new AudioContext();
-    await bot.out.resume();
-    bot.dest = bot.out.createMediaStreamDestination();
-    return bot.dest.stream;
+    const tracks = [];
+    if (c && c.audio) {
+      const ctx = audioOut();
+      await ctx.resume();
+      bot.dest = ctx.createMediaStreamDestination();
+      tracks.push(...bot.dest.stream.getAudioTracks());
+    }
+    if (c && c.video) { audioOut(); tracks.push(...icon().captureStream(15).getVideoTracks()); }
+    return new MediaStream(tracks);
   };
 }
 
@@ -126,6 +179,7 @@ async function pagePlay(b64) {
   const src = bot.out.createBufferSource();
   src.buffer = buf;
   src.connect(bot.dest);
+  if (bot.meter) src.connect(bot.meter);   // drives the icon's pulse
   bot.playing = src;
   await new Promise(res => { src.onended = res; src.start(); });
   if (bot.playing === src) bot.playing = null;
@@ -206,7 +260,7 @@ export class CallBot {
       args: ['--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required', '--mute-audio']
     });
     try {
-      const context = await this.browser.newContext({ permissions: ['camera', 'microphone'], viewport: { width: 800, height: 600 } });
+      const context = await this.browser.newContext({ permissions: ['camera', 'microphone'], viewport: { width: 1280, height: 720 } });
       const page = await context.newPage();
       await page.addInitScript(pageInit);
       await page.exposeFunction('__callAudio', (id, who, b64) => this.onAudio(id, who, Buffer.from(b64, 'base64')));
@@ -367,6 +421,15 @@ export class CallBot {
       rm(txt, { force: true }).catch(() => {});
       rm(out, { force: true }).catch(() => {});
     }
+  }
+
+  /* ------------------------------------------------------------- seeing */
+
+  // A picture of the call as a participant sees it: everyone's video, with name tags.
+  async look() {
+    if (!this.joined) throw new Error('Not in a call.');
+    if (!this.inCall) throw new Error('The page has left the call.');
+    return await this.page.locator('#grid').screenshot({ type: 'jpeg', quality: 80, timeout: 10000 });
   }
 
   async stopSpeaking() {

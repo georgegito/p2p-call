@@ -85,13 +85,20 @@ try {
   };
 
   const tools = (await client.listTools()).tools.map(t => t.name).sort();
-  check(tools.join() === 'call_status,join_call,leave_call,listen,say', 'tools are listed', tools.join(', '));
+  check(tools.join() === 'call_status,join_call,leave_call,listen,look,say', 'tools are listed', tools.join(', '));
 
   const joined = await call('join_call', { link });
   check(!joined.isError && /Maria/.test(joined.out), 'bot joins and sees the human');
   const tile = human.locator('#grid .tile', { hasText: 'Claude' });
   await tile.waitFor({ state: 'visible', timeout: 20000 });
   check(true, 'human sees a "Claude" tile');
+  let iconShown = false;
+  for (let i = 0; i < 40 && !iconShown; i++) {
+    iconShown = await tile.evaluate(t => t.querySelector('video').videoWidth > 0 && t.querySelector('.ph').hidden);
+    if (!iconShown) await new Promise(r => setTimeout(r, 500));
+  }
+  check(iconShown, 'human sees the bot\'s icon as its picture');
+  if (process.env.SHOT) await human.screenshot({ path: process.env.SHOT });
 
   // The sentence loops, so the first thing heard may be its tail; allow a few tries.
   let heard = '';
@@ -99,7 +106,9 @@ try {
   check(/→ Maria: .*capital of France/i.test(heard), 'bot hears and transcribes the human, with their name, and notices it was addressed');
 
   heardByHuman.length = 0;
-  const said = await call('say', { text: 'The capital of France is Paris.' });
+  const saying = call('say', { text: 'The capital of France is Paris.' });
+  if (process.env.SHOT) { await new Promise(r => setTimeout(r, 1800)); await human.screenshot({ path: process.env.SHOT.replace('.png', '-speaking.png') }); }
+  const said = await saying;
   check(!said.isError, 'bot speaks');
   await new Promise(r => setTimeout(r, 1500));
   const file = join(tmp, 'human-heard.wav');
@@ -107,6 +116,11 @@ try {
   const { stdout } = await run(config.whisper, ['-m', config.model, '-f', file, '-l', 'en', '-nt', '-np']);
   const whatHumanHeard = cleanTranscript(stdout);
   check(/Paris/i.test(whatHumanHeard), 'human hears the bot', JSON.stringify(whatHumanHeard));
+
+  const seen = await client.callTool({ name: 'look', arguments: {} });
+  const picture = seen.content.find(c => c.type === 'image');
+  check(!seen.isError && picture && picture.data.length > 5000, 'bot can take a picture of the call');
+  if (picture && process.env.SHOT) await writeFile(process.env.SHOT.replace('.png', '-look.jpg'), Buffer.from(picture.data, 'base64'));
 
   const status = await call('call_status');
   check(/Maria/.test(status.out), 'status names the human');

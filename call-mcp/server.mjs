@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // MCP server: lets an assistant join a call as a participant.
-//   join_call(link, name)  open the invite link and join, sound only
+//   join_call(link, name)  open the invite link and join
 //   listen(timeout_s)      wait until someone has said something; returns the transcript
 //   say(text)              speak into the call
+//   look()                 a picture of everyone's video
 //   call_status()          who is here
 //   leave_call()           hang up
 
@@ -32,6 +33,7 @@ const server = new McpServer({ name: 'call', version: '0.1.0' }, {
     'Lets you take part in a voice call. You hear through speech-to-text and talk through text-to-speech.',
     'After join_call, stay in a loop: listen, then say your reply, then listen again. You only hear what is said while you are in the call, and it is queued until your next listen.',
     'Speak like a person on a call: one to three short sentences, plain words, no markdown, lists, code or URLs (they are read aloud literally).',
+    'You can also see: look returns a picture of everyone\'s video. Use it when asked to look, or when what is said only makes sense with the picture.',
     'Transcripts are machine-made and can be wrong, especially names and short words. If something makes no sense, ask the person to repeat it.',
     'By default listen only returns when someone addresses you: they say your name, or reply within a few seconds of you speaking. Those lines are marked with "→"; unmarked lines are other conversation given as context, not requests to you. Answer what was addressed to you.',
     'When listen reports that nobody addressed you, call listen again and stay quiet. Leave when asked to, or when everyone else has left.'
@@ -40,7 +42,7 @@ const server = new McpServer({ name: 'call', version: '0.1.0' }, {
 
 server.registerTool('join_call', {
   title: 'Join a call',
-  description: 'Join a call from its invite link (a URL containing "#room=...&key=..."). You join with sound only, no camera. Returns who is already there.',
+  description: 'Join a call from its invite link (a URL containing "#room=...&key=..."). The others see you as an icon. Returns who is already there.',
   inputSchema: {
     link: z.string().describe('The invite link, exactly as it was shared.'),
     name: z.string().min(3).max(30).optional().describe('The name the others see, and the word that gets your attention. Defaults to "Claude".'),
@@ -76,6 +78,18 @@ server.registerTool('say', {
 }, safely(async ({ text: words }) => {
   const seconds = await bot.say(words);
   return text(`Said (${seconds.toFixed(1)}s).`);
+}));
+
+server.registerTool('look', {
+  title: 'Look at the call',
+  description: 'Take a picture of the call as you see it right now: each person\'s video in a tile with their name. Use it when someone asks you to look at something, or when seeing would help. People with their camera off show as a placeholder.',
+  inputSchema: {}
+}, safely(async () => {
+  const jpeg = await bot.look();
+  return { content: [
+    { type: 'image', data: jpeg.toString('base64'), mimeType: 'image/jpeg' },
+    { type: 'text', text: `The call right now. People: ${people(bot.roster)}.` }
+  ] };
 }));
 
 server.registerTool('call_status', {

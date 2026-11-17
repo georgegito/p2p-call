@@ -11,7 +11,11 @@ you ◀── call ── headless browser ◀── macOS `say` ◀────
 ```
 
 Speech-to-text and text-to-speech both run on this machine. Call audio is not sent to
-any service; only the transcript reaches Claude.
+any service; only the transcript reaches Claude. The exception is `look`: when Claude
+takes a picture of the call, that image is sent to Claude like any other image.
+
+Only this machine needs the MCP server. The bot is a normal participant, so it hears and
+sees everyone in the room, whatever device they joined from.
 
 ## Setup (once)
 
@@ -35,9 +39,10 @@ Claude then loops over these tools:
 
 | Tool | What it does |
 | --- | --- |
-| `join_call(link, name?, only_when_addressed?)` | Opens the invite link and joins with sound only. |
+| `join_call(link, name?, only_when_addressed?)` | Opens the invite link and joins. Its picture is an icon that pulses while it speaks. |
 | `listen(timeout_s?)` | Waits until someone addresses Claude; returns `Name: words` lines (addressed ones marked `→`) and join/leave notes. |
 | `say(text)` | Speaks the text into the call; returns when done. |
+| `look()` | Returns a picture of the call: everyone's video with their names. |
 | `call_status()` | Who is there, and whether someone is speaking. |
 | `leave_call()` | Hangs up. |
 
